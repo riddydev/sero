@@ -369,14 +369,14 @@ class FootballDataOrgAdapter(FootballAPIAdapter):
                     continue
                 raise FootballAPIError(
                     "The football service timed out. Please try again shortly."
-                ) from exc
+                ) from exp
             except httpx.HTTPError as exc:
                 if attempt < retries:
                     await asyncio.sleep(1.5 * (attempt + 1))
                     continue
                 raise FootballAPIError(
                     "The football service could not be reached. Please try again shortly."
-                ) from exc
+                ) from exp
 
             if response.status_code == 429 and attempt < retries:
                 retry_after = response.headers.get("Retry-After", "")
@@ -411,7 +411,7 @@ class FootballDataOrgAdapter(FootballAPIAdapter):
             except (ValueError, json.JSONDecodeError) as exc:
                 raise FootballAPIError(
                     "The football service returned invalid data. Please try again."
-                ) from exc
+                ) from exp
         raise FootballAPIError("The football service could not be reached.")
 
     @staticmethod
@@ -461,8 +461,8 @@ class FootballDataOrgAdapter(FootballAPIAdapter):
     async def get_team_all_competitions(self, team_id: int) -> list[str]:
         try:
             data = await self._request_json(f"teams/{team_id}")
-        except FootballAPIError as exc:
-            if exc.status_code in (404, 409):
+        except FootballAPIError as exp:
+            if exp.status_code in (404, 409):
                 return []
             raise
         return [
@@ -486,8 +486,8 @@ class FootballDataOrgAdapter(FootballAPIAdapter):
                     f"competitions/{code}/teams", retries=1
                 )
                 return code, data
-            except FootballAPIError as exc:
-                if exc.status_code in (403, 404):
+            except FootballAPIError as exp:
+                if exp.status_code in (403, 404):
                     return code, None
                 raise
 
@@ -887,8 +887,8 @@ async def h2h_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 lines.append(f" — {competition}")
             lines.append(f"\n{home}  {score['home']}\n{away}  {score['away']}\n")
         await status.edit_text("\n".join(lines), parse_mode="HTML")
-    except FootballAPIError as exc:
-        await status.edit_text(f"❌ {html.escape(exc.public_message)}", parse_mode="HTML")
+    except FootballAPIError as exp:
+        await status.edit_text(f"❌ {html.escape(exp.public_message)}", parse_mode="HTML")
     except Exception:
         logger.exception("Unexpected error in h2h command")
         await status.edit_text(
@@ -945,8 +945,8 @@ async def team_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode="HTML",
             reply_markup=build_team_keyboard(info["team_id"], info["competitions"]),
         )
-    except FootballAPIError as exc:
-        await status.edit_text(f"❌ {html.escape(exc.public_message)}", parse_mode="HTML")
+    except FootballAPIError as exp:
+        await status.edit_text(f"❌ {html.escape(exp.public_message)}", parse_mode="HTML")
     except Exception:
         logger.exception("Unexpected error in team command")
         await status.edit_text(
@@ -997,9 +997,9 @@ async def send_team_stats(
         await query.edit_message_text(
             text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except FootballAPIError as exc:
+    except FootballAPIError as exp:
         await query.edit_message_text(
-            f"❌ {html.escape(exc.public_message)}", parse_mode="HTML"
+            f"❌ {html.escape(exp.public_message)}", parse_mode="HTML"
         )
     except Exception:
         logger.exception("Unexpected error sending team stats")
@@ -1035,7 +1035,6 @@ async def competition_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
     if action == "back" and team_id is not None:
-        # Re-show competition chooser - we need competitions list; fall back to refresh search
         await query.edit_message_text(
             "⬅️ Use /team again to choose a competition."
         )
@@ -1063,11 +1062,10 @@ async def preflight_telegram(bot: Bot) -> None:
     """Fail fast if Telegram already has an active polling session."""
     try:
         await bot.get_me()
-        # A lightweight check that the token works
-    except TelegramError as exc:
+    except TelegramError as exp:
         raise StartupConfigurationError(
-            f"Telegram preflight failed: {exc.__class__.__name__}"
-        ) from exc
+            f"Telegram preflight failed: {exp.__class__.__name__}"
+        ) from exp
 
 
 async def poll_updates(app: Application) -> None:
@@ -1076,14 +1074,13 @@ async def poll_updates(app: Application) -> None:
     try:
         await preflight_telegram(app.bot)
         await app.updater.start_polling(drop_pending_updates=True)
-        # Keep running until cancelled
         while True:
             await asyncio.sleep(3600)
-    except Conflict as exc:
+    except Conflict as exp:
         raise StartupConfigurationError(
             "Telegram polling conflict: another process is already using this bot token. "
             "Stop the other workflow, deployment, or process, then restart."
-        ) from exc
+        ) from exp
     finally:
         with suppress(Exception):
             await app.updater.stop()
@@ -1116,7 +1113,6 @@ async def run_bot(settings: Settings) -> None:
         settings.football_data_api_key,
         base_url=settings.football_api_base_url,
     )
-    # Share the configured cache with the adapter
     adapter.cache = cache
     app = build_application(settings.telegram_bot_token)
     with SingleInstanceLock():
@@ -1126,13 +1122,13 @@ async def run_bot(settings: Settings) -> None:
 def main() -> None:
     try:
         settings = load_settings()
-    except StartupConfigurationError as exc:
-        logger.error("%s", exc)
-        raise SystemExit(1) from exc
+    except StartupConfigurationError as exp:
+        logger.error("%s", exp)
+        raise SystemExit(1) from exp
     try:
         asyncio.run(run_bot(settings))
-    except StartupConfigurationError as exc:
-        logger.error("%s", exc)
+    except StartupConfigurationError as exp:
+        logger.error("%s", exp)
         raise SystemExit(1) from exp
     except KeyboardInterrupt:
         logger.info("Shutting down")
